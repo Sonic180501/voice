@@ -41,6 +41,7 @@ async def start_handler(message: types.Message):
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio_file(message: types.Message):
+    # Проверка размера файла перед скачиванием
     file_size = 0
     file_id = None
     
@@ -86,15 +87,17 @@ async def handle_audio_file(message: types.Message):
 
         uploaded_file = genai.upload_file(file_path)
         
-        candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
+        # Обновленный список моделей с приоритетом на Gemini 3 Flash
+        candidate_models = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"]
         response = None
         
         for model_name in candidate_models:
             try:
                 model = genai.GenerativeModel(model_name)
                 prompt = (
-                    "Транскрибируй следующее аудио точно и без ошибок. "
-                    "Распознавай узбекский и русский языки. Разделяй спикеров по репликам."
+                    "Транскрибируй следующее аудио максимально точно и подробно. "
+                    "Распознавай узбекский и русский языки, включая смешанные реплики. "
+                    "Разделяй спикеров по строкам (Спикер 1, Спикер 2)."
                 )
                 response = model.generate_content([prompt, uploaded_file])
                 if response and response.text:
