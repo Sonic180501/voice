@@ -5,20 +5,21 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from google import genai
-from google.genai import types as genai_types
 from aiohttp import web
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
-WEB_APP_URL = os.getenv("WEB_APP_URL", "https://your-domain.com/index.html")
-
-# Инициализация нового клиента Google GenAI API (поддерживает ключи AQ... и AIzaSy...)
-client = genai.Client(api_key=GEMINI_API_KEY)
+RAW_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+WEB_APP_URL = os.getenv("WEB_APP_URL", "https://your-web-app-url.vercel.app")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# Инициализация нового клиента Gemini API
+ai_client = None
+if RAW_GEMINI_KEY:
+    ai_client = genai.Client(api_key=RAW_GEMINI_KEY)
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -43,6 +44,10 @@ async def start_handler(message: types.Message):
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio_file(message: types.Message):
+    if not ai_client:
+        await message.answer("❌ Ошибка: GEMINI_API_KEY не установлен или недействителен.")
+        return
+
     file_size = 0
     file_id = None
     
@@ -84,10 +89,10 @@ async def handle_audio_file(message: types.Message):
         os.makedirs("downloads", exist_ok=True)
         
         await bot.download_file(file_info.file_path, file_path)
-        await status_msg.edit_text("⚡ Транскрибация речи (Узбекский / Русский)...")
+        await status_msg.edit_text("⚡ Расшифровка через Gemini 3 Flash (Узбекский / Русский)...")
 
-        # Загрузка файла через новый SDK
-        uploaded_file = client.files.upload(file=file_path)
+        # Загрузка файла в Gemini Files API
+        uploaded_file = ai_client.files.upload(file=file_path)
         
         prompt = (
             "Транскрибируй следующее аудио максимально точно и подробно. "
@@ -95,14 +100,18 @@ async def handle_audio_file(message: types.Message):
             "Разделяй спикеров по строкам (Спикер 1, Спикер 2)."
         )
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
+        # Вызов новейшей модели Gemini 3 Flash
+        response = ai_client.models.generate_content(
+            model='gemini-3-flash-preview',
             contents=[prompt, uploaded_file]
         )
 
         if os.path.exists(file_path):
             os.remove(file_path)
-        client.files.delete(name=uploaded_file.name)
+        try:
+            ai_client.files.delete(name=uploaded_file.name)
+        except Exception:
+            pass
 
         if not response or not response.text:
             await status_msg.edit_text("❌ Не удалось получить расшифровку от Gemini API.")
@@ -114,11 +123,11 @@ async def handle_audio_file(message: types.Message):
                 f.write(text)
             await message.answer_document(
                 types.FSInputFile("transcription.txt"),
-                caption="📝 Текст расшифровки:"
+                caption="📝 Текст расшифровки (Gemini 3 Flash):"
             )
             os.remove("transcription.txt")
         else:
-            await message.answer(f"📝 **Результат расшифровки:**\n\n{text}", parse_mode="Markdown")
+            await message.answer(f"📝 **Результат расшифровки (Gemini 3 Flash):**\n\n{text}", parse_mode="Markdown")
             
         await status_msg.delete()
 
