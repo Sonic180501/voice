@@ -4,7 +4,8 @@ import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from aiohttp import web
 
 # --- НАСТРОЙКИ ---
@@ -12,7 +13,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 WEB_APP_URL = os.getenv("WEB_APP_URL", "https://your-domain.com/index.html")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Инициализация нового клиента Google GenAI API (поддерживает ключи AQ... и AIzaSy...)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -41,7 +43,6 @@ async def start_handler(message: types.Message):
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio_file(message: types.Message):
-    # Проверка размера файла перед скачиванием
     file_size = 0
     file_id = None
     
@@ -85,29 +86,23 @@ async def handle_audio_file(message: types.Message):
         await bot.download_file(file_info.file_path, file_path)
         await status_msg.edit_text("⚡ Транскрибация речи (Узбекский / Русский)...")
 
-        uploaded_file = genai.upload_file(file_path)
+        # Загрузка файла через новый SDK
+        uploaded_file = client.files.upload(file=file_path)
         
-        # Обновленный список моделей с приоритетом на Gemini 3 Flash
-        candidate_models = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"]
-        response = None
-        
-        for model_name in candidate_models:
-            try:
-                model = genai.GenerativeModel(model_name)
-                prompt = (
-                    "Транскрибируй следующее аудио максимально точно и подробно. "
-                    "Распознавай узбекский и русский языки, включая смешанные реплики. "
-                    "Разделяй спикеров по строкам (Спикер 1, Спикер 2)."
-                )
-                response = model.generate_content([prompt, uploaded_file])
-                if response and response.text:
-                    break
-            except Exception:
-                continue
+        prompt = (
+            "Транскрибируй следующее аудио максимально точно и подробно. "
+            "Распознавай узбекский и русский языки, включая смешанные реплики. "
+            "Разделяй спикеров по строкам (Спикер 1, Спикер 2)."
+        )
+
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, uploaded_file]
+        )
 
         if os.path.exists(file_path):
             os.remove(file_path)
-        genai.delete_file(uploaded_file.name)
+        client.files.delete(name=uploaded_file.name)
 
         if not response or not response.text:
             await status_msg.edit_text("❌ Не удалось получить расшифровку от Gemini API.")
