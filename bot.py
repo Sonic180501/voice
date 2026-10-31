@@ -12,7 +12,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 WEB_APP_URL = os.getenv("WEB_APP_URL", "https://your-domain.com/index.html")
 
-# Инициализация Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
@@ -21,12 +20,11 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    """Приветственное сообщение и кнопка запуска Web App."""
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🎙️ Открыть Web App",
+                    text="🎙️ Открыть Web App (для файлов >20 МБ)",
                     web_app=WebAppInfo(url=WEB_APP_URL)
                 )
             ]
@@ -34,28 +32,49 @@ async def start_handler(message: types.Message):
     )
     await message.answer(
         "👋 **Добро пожаловать в SpeechToText AI Bot!**\n\n"
-        "1️⃣ Нажмите **«Открыть Web App»** для работы в интерфейсе.\n"
-        "2️⃣ Или просто **отправьте аудиофайл/голосовое сообщение** прямо в этот чат!",
+        "📌 **Как отправить аудио:**\n"
+        "• **До 20 МБ**: Просто отправьте голосовое или файл прямо в этот чат.\n"
+        "• **Больше 20 МБ (до 2 ГБ)**: Нажмите кнопку **«Открыть Web App»** ниже!",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio_file(message: types.Message):
-    """Обработка аудиофайлов любого размера напрямую через Gemini File API."""
-    status_msg = await message.answer("📥 Загрузка файла...")
-    
+    file_size = 0
     file_id = None
+    
     if message.voice:
         file_id = message.voice.file_id
+        file_size = message.voice.file_size or 0
     elif message.audio:
         file_id = message.audio.file_id
+        file_size = message.audio.file_size or 0
     elif message.document and (message.document.mime_type or '').startswith(('audio/', 'video/')):
         file_id = message.document.file_id
+        file_size = message.document.file_size or 0
     
     if not file_id:
-        await status_msg.edit_text("❌ Пожалуйста, отправьте аудиофайл.")
+        await message.answer("❌ Пожалуйста, отправьте аудиофайл.")
         return
+
+    # Ограничение Telegram Bot API (20 MB)
+    if file_size > 20 * 1024 * 1024:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🎙️ Открыть Web App", web_app=WebAppInfo(url=WEB_APP_URL))]
+            ]
+        )
+        await message.answer(
+            "⚠️ **Этот файл больше 20 МБ!**\n\n"
+            "Telegram Bot API не позволяет ботам скачивать файлы больше 20 МБ в чате.\n\n"
+            "👇 Нажмите **«Открыть Web App»** — там можно легко расшифровать файлы любого размера (до 2 ГБ)!",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    status_msg = await message.answer("📥 Загрузка файла...")
 
     try:
         file_info = await bot.get_file(file_id)
@@ -65,10 +84,8 @@ async def handle_audio_file(message: types.Message):
         await bot.download_file(file_info.file_path, file_path)
         await status_msg.edit_text("⚡ Транскрибация речи (Узбекский / Русский)...")
 
-        # Отправка файла через Gemini File API
         uploaded_file = genai.upload_file(file_path)
         
-        # Перебор актуальных моделей Gemini
         candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"]
         response = None
         
